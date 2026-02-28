@@ -11,7 +11,7 @@ VERSION="1.0.0"
 #   provision:
 #   - mode: system
 #     script: |
-#       curl -fsSL https://raw.githubusercontent.com/your-repo/pvy-lima-ui/main/scripts/guest-agent.sh | bash
+#       curl -fsSL https://github.com/pvyswiss/PVY-LIMA-DESKTOP-Agent/blob/main/guest-agent.sh | bash
 #
 # Usage:
 #   ./guest-agent.sh [command]
