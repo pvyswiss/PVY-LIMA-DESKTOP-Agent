@@ -11,7 +11,7 @@ VERSION="1.0.0"
 #   provision:
 #   - mode: system
 #     script: |
-#       curl -fsSL https://github.com/pvyswiss/PVY-LIMA-DESKTOP-Agent/blob/main/guest-agent.sh | bash
+#       curl -fsSL https://raw.githubusercontent.com/pvyswiss/PVY-LIMA-DESKTOP-Agent/main/guest-agent.sh -o /usr/local/bin/guest-agent.sh && chmod +x /usr/local/bin/guest-agent.sh
 #
 # Usage:
 #   ./guest-agent.sh [command]
@@ -27,12 +27,19 @@ VERSION="1.0.0"
 #   network     - Network interfaces and IPs
 #   containers   - Container runtime info (Podman/Docker)
 #   json        - Output all info as JSON
+#   install     - Install this script to /usr/local/bin/guest-agent.sh
 
 set -euo pipefail
 
 OUTPUT_JSON=false
 
-if [[ "${1:-}" == "json" ]]; then
+if [[ "${1:-}" == "install" ]]; then
+    # Install this script to /usr/local/bin
+    sudo cp "$0" /usr/local/bin/guest-agent.sh 2>/dev/null || cp "$0" /usr/local/bin/guest-agent.sh
+    sudo chmod +x /usr/local/bin/guest-agent.sh 2>/dev/null || chmod +x /usr/local/bin/guest-agent.sh
+    echo "Installed guest-agent.sh to /usr/local/bin/"
+    exit 0
+elif [[ "${1:-}" == "json" ]]; then
     OUTPUT_JSON=true
 fi
 
