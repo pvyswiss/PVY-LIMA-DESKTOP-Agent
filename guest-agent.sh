@@ -147,7 +147,7 @@ get_cpu_usage() {
     local current_stats
     local previous_stats
     
-    # Check if previous stats file exists and is fresh (<30 seconds)
+    # Check if previous stats file exists and is fresh (<10 seconds)
     local use_previous=false
     if [[ -f "$previous_file" ]]; then
         local file_age=0
@@ -159,7 +159,7 @@ get_cpu_usage() {
                 file_age=$(($(date +%s) - $(stat -f %m "$previous_file")))
             fi
         fi
-        if [[ $file_age -lt 30 ]]; then
+        if [[ $file_age -lt 10 ]]; then
             use_previous=true
         else
             echo "[DEBUG] Previous stats file is stale (${file_age}s old), doing fresh measurement" >&2
