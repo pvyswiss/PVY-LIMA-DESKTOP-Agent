@@ -35,10 +35,38 @@ set -euo pipefail
 OUTPUT_JSON=false
 
 if [[ "${1:-}" == "install" ]]; then
-    # Install this script to /usr/local/bin
-    sudo cp "$0" /usr/local/bin/guest-agent.sh 2>/dev/null || cp "$0" /usr/local/bin/guest-agent.sh
-    sudo chmod +x /usr/local/bin/guest-agent.sh 2>/dev/null || chmod +x /usr/local/bin/guest-agent.sh
-    echo "Installed guest-agent.sh to /usr/local/bin/"
+    # Install this script to /usr/local/bin (skip if already at same location)
+    local script_path=$(realpath "$0" 2>/dev/null || echo "$0")
+    local dest_path="/usr/local/bin/guest-agent.sh"
+    
+    if [[ "$script_path" != "$dest_path" ]]; then
+        sudo cp "$script_path" "$dest_path" 2>/dev/null || cp "$script_path" "$dest_path"
+        sudo chmod +x "$dest_path" 2>/dev/null || chmod +x "$dest_path"
+        echo "Installed guest-agent.sh to /usr/local/bin/"
+    else
+        echo "guest-agent.sh already installed at /usr/local/bin/"
+    fi
+    
+    # Create stats directory and initialize if needed
+    mkdir -p /tmp 2>/dev/null || true
+    local stats_file="/tmp/pvy_cpu_stats"
+    if [[ ! -f "$stats_file" ]]; then
+        # Initialize with current CPU stats (run in subshell to avoid function dependencies)
+        (
+            if [[ -f /proc/stat ]]; then
+                head -1 /proc/stat | sed 's/^cpu\s*/cpu /' > "$stats_file" 2>/dev/null || true
+            else
+                echo "cpu 0 0 0 0 0 0 0 0 0 0" > "$stats_file" 2>/dev/null || true
+            fi
+        )
+        # Make stats file readable/writable by all (since guest agent runs as different users)
+        chmod 666 "$stats_file" 2>/dev/null || true
+        echo "Initialized CPU stats file at $stats_file"
+    else
+        # Ensure stats file has correct permissions
+        chmod 666 "$stats_file" 2>/dev/null || true
+    fi
+    
     exit 0
 elif [[ "${1:-}" == "json" ]]; then
     OUTPUT_JSON=true
@@ -113,62 +141,76 @@ get_cpu_usage() {
     # Debug: log current stats (truncated)
     echo "[DEBUG] Current stats: $(echo "$current_stats" | cut -d' ' -f1-5)..." >&2
     
+    # Initialize variables with defaults
+    local prev_user=0 prev_nice=0 prev_system=0 prev_idle=0 prev_iowait=0 prev_irq=0 prev_softirq=0 prev_steal=0
+    local curr_user=0 curr_nice=0 curr_system=0 curr_idle=0 curr_iowait=0 curr_irq=0 curr_softirq=0 curr_steal=0
+    local utilization="0.0"
+    
+    # Parse current values (always try to parse, even if fails)
+    {
+        read -r _ curr_user curr_nice curr_system curr_idle curr_iowait curr_irq curr_softirq curr_steal _ _ <<< "$current_stats" || true
+    } 2>/dev/null
+    
+    # Default current values if empty
+    curr_user=${curr_user:-0}; curr_nice=${curr_nice:-0}; curr_system=${curr_system:-0}
+    curr_idle=${curr_idle:-0}; curr_iowait=${curr_iowait:-0}; curr_irq=${curr_irq:-0}
+    curr_softirq=${curr_softirq:-0}; curr_steal=${curr_steal:-0}
+    
     if [[ -f "$previous_file" ]]; then
-        previous_stats=$(cat "$previous_file")
+        previous_stats=$(cat "$previous_file" 2>/dev/null || echo "")
         
         # Debug: log previous stats (truncated)
         echo "[DEBUG] Previous stats: $(echo "$previous_stats" | cut -d' ' -f1-5)..." >&2
         
-        # Parse previous values
-        local prev_user prev_nice prev_system prev_idle prev_iowait prev_irq prev_softirq prev_steal
-        read -r _ prev_user prev_nice prev_system prev_idle prev_iowait prev_irq prev_softirq prev_steal <<< "$previous_stats"
-        
-        # Parse current values
-        local curr_user curr_nice curr_system curr_idle curr_iowait curr_irq curr_softirq curr_steal
-        read -r _ curr_user curr_nice curr_system curr_idle curr_iowait curr_irq curr_softirq curr_steal <<< "$current_stats"
-        
-        # Calculate deltas (default to 0 if empty)
-        prev_user=${prev_user:-0}; prev_nice=${prev_nice:-0}; prev_system=${prev_system:-0}
-        prev_idle=${prev_idle:-0}; prev_iowait=${prev_iowait:-0}; prev_irq=${prev_irq:-0}
-        prev_softirq=${prev_softirq:-0}; prev_steal=${prev_steal:-0}
-        
-        curr_user=${curr_user:-0}; curr_nice=${curr_nice:-0}; curr_system=${curr_system:-0}
-        curr_idle=${curr_idle:-0}; curr_iowait=${curr_iowait:-0}; curr_irq=${curr_irq:-0}
-        curr_softirq=${curr_softirq:-0}; curr_steal=${curr_steal:-0}
-        
-        # Calculate totals
-        local prev_total curr_total prev_idle_total curr_idle_total
-        prev_total=$((prev_user + prev_nice + prev_system + prev_irq + prev_softirq + prev_steal))
-        curr_total=$((curr_user + curr_nice + curr_system + curr_irq + curr_softirq + curr_steal))
-        prev_idle_total=$((prev_idle + prev_iowait))
-        curr_idle_total=$((curr_idle + curr_iowait))
-        
-        # Calculate deltas
-        local total_delta idle_delta
-        total_delta=$((curr_total - prev_total))
-        idle_delta=$((curr_idle_total - prev_idle_total))
-        
-        # Debug: log calculation
-        echo "[DEBUG] total_delta=$total_delta, idle_delta=$idle_delta" >&2
-        
-        # Calculate utilization (avoid division by zero)
-        if [[ $total_delta -gt 0 ]]; then
-            local utilization
-            utilization=$(awk "BEGIN {printf \"%.1f\", $total_delta / ($total_delta + $idle_delta) * 100}")
-            echo "[DEBUG] CPU usage: $utilization%" >&2
-            echo "$utilization"
+        if [[ -n "$previous_stats" ]]; then
+            # Parse previous values (silently ignore errors)
+            {
+                read -r _ prev_user prev_nice prev_system prev_idle prev_iowait prev_irq prev_softirq prev_steal _ _ <<< "$previous_stats" || true
+            } 2>/dev/null
+            
+            # Default previous values if empty
+            prev_user=${prev_user:-0}; prev_nice=${prev_nice:-0}; prev_system=${prev_system:-0}
+            prev_idle=${prev_idle:-0}; prev_iowait=${prev_iowait:-0}; prev_irq=${prev_irq:-0}
+            prev_softirq=${prev_softirq:-0}; prev_steal=${prev_steal:-0}
+            
+            # Calculate totals
+            local prev_total curr_total prev_idle_total curr_idle_total
+            prev_total=$((prev_user + prev_nice + prev_system + prev_irq + prev_softirq + prev_steal))
+            curr_total=$((curr_user + curr_nice + curr_system + curr_irq + curr_softirq + curr_steal))
+            prev_idle_total=$((prev_idle + prev_iowait))
+            curr_idle_total=$((curr_idle + curr_iowait))
+            
+            # Calculate deltas
+            local total_delta idle_delta
+            total_delta=$((curr_total - prev_total))
+            idle_delta=$((curr_idle_total - prev_idle_total))
+            
+            # Debug: log calculation
+            echo "[DEBUG] total_delta=$total_delta, idle_delta=$idle_delta" >&2
+            
+            # Calculate utilization (avoid division by zero)
+            if [[ $total_delta -gt 0 ]]; then
+                utilization=$(awk "BEGIN {printf \"%.1f\", $total_delta / ($total_delta + $idle_delta) * 100}" 2>/dev/null || echo "0.0")
+                echo "[DEBUG] CPU usage: $utilization%" >&2
+            else
+                echo "[DEBUG] No CPU activity or first measurement" >&2
+                utilization="0.0"
+            fi
         else
-            echo "[DEBUG] No CPU activity or first measurement" >&2
-            echo "0.0"
+            echo "[DEBUG] Previous stats file empty or unreadable" >&2
+            utilization="0.0"
         fi
     else
         # First run - just return 0, stats will be saved below
         echo "[DEBUG] First run, no previous stats" >&2
-        echo "0.0"
+        utilization="0.0"
     fi
     
     # Save current stats for next run (atomic write to avoid race conditions)
-    echo "$current_stats" > "${previous_file}.tmp" && mv "${previous_file}.tmp" "$previous_file"
+    echo "$current_stats" > "${previous_file}.tmp" 2>/dev/null && mv "${previous_file}.tmp" "$previous_file" 2>/dev/null || true
+    
+    # Always return a value (safety fallback)
+    echo "${utilization}"
 }
 
 # Check if enhanced CPU stats are available
