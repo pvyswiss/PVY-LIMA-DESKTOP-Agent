@@ -94,14 +94,23 @@ get_uptime() {
 }
 
 get_memory_info() {
-    if [[ -f /proc/meminfo ]]; then
+    if command -v free >/dev/null 2>&1; then
+        # Use free command (more reliable)
         local total used available
-        total=$(grep MemTotal /proc/meminfo | awk '{print $2}')
-        used=$(grep MemAvailable /proc/meminfo | awk '{print $3}')
-        if [[ -z "$used" ]]; then
-            used=$(grep MemFree /proc/meminfo | awk '{print $2}')
+        # free -b outputs in bytes, convert to kB (divide by 1024)
+        total=$(free -b | awk '/^Mem:/ {printf "%d", $2/1024}')
+        used=$(free -b | awk '/^Mem:/ {printf "%d", $3/1024}')
+        available=$(free -b | awk '/^Mem:/ {printf "%d", $7/1024}')  # available column
+        echo "total:${total} used:${used} available:${available}"
+    elif [[ -f /proc/meminfo ]]; then
+        # Fallback to /proc/meminfo
+        local total available used
+        total=$(awk '/MemTotal/ {print $2}' /proc/meminfo)
+        available=$(awk '/MemAvailable/ {print $2}' /proc/meminfo)
+        if [[ -z "$available" ]]; then
+            available=$(awk '/MemFree/ {print $2}' /proc/meminfo)
         fi
-        available=$((total - used))
+        used=$((total - available))
         echo "total:${total} used:${used} available:${available}"
     fi
 }
@@ -132,14 +141,58 @@ get_cpu_stats() {
 # Takes two stat snapshots and calculates percentage
 # Returns: utilization (0-100)
 get_cpu_usage() {
-    local previous_file="/tmp/pvy_cpu_stats"
+    local user_id
+    user_id=$(id -u 2>/dev/null || echo "0")
+    local previous_file="/tmp/pvy_cpu_stats_${user_id}"
     local current_stats
     local previous_stats
     
-    current_stats=$(get_cpu_stats)
+    # Check if previous stats file exists and is fresh (<30 seconds)
+    local use_previous=false
+    if [[ -f "$previous_file" ]]; then
+        local file_age=0
+        if command -v stat >/dev/null 2>&1; then
+            # Try different stat formats for Linux/BSD
+            if stat -c %Y "$previous_file" >/dev/null 2>&1; then
+                file_age=$(($(date +%s) - $(stat -c %Y "$previous_file")))
+            elif stat -f %m "$previous_file" >/dev/null 2>&1; then
+                file_age=$(($(date +%s) - $(stat -f %m "$previous_file")))
+            fi
+        fi
+        if [[ $file_age -lt 30 ]]; then
+            use_previous=true
+        else
+            echo "[DEBUG] Previous stats file is stale (${file_age}s old), doing fresh measurement" >&2
+        fi
+    fi
     
-    # Debug: log current stats (truncated)
-    echo "[DEBUG] Current stats: $(echo "$current_stats" | cut -d' ' -f1-5)..." >&2
+    if $use_previous; then
+        # Use existing stats file for delta calculation
+        current_stats=$(get_cpu_stats)
+        
+        # Debug: log current stats (truncated)
+        echo "[DEBUG] Current stats: $(echo "$current_stats" | cut -d' ' -f1-5)..." >&2
+        
+        previous_stats=$(cat "$previous_file" 2>/dev/null || echo "")
+        
+        # Debug: log previous stats (truncated)
+        echo "[DEBUG] Previous stats: $(echo "$previous_stats" | cut -d' ' -f1-5)..." >&2
+    else
+        # Do fresh measurement: two samples 1 second apart
+        echo "[DEBUG] Taking fresh CPU measurement (two samples 1s apart)" >&2
+        
+        local first_stats second_stats
+        first_stats=$(get_cpu_stats)
+        sleep 1
+        second_stats=$(get_cpu_stats)
+        
+        # Debug: log both samples
+        echo "[DEBUG] First sample: $(echo "$first_stats" | cut -d' ' -f1-5)..." >&2
+        echo "[DEBUG] Second sample: $(echo "$second_stats" | cut -d' ' -f1-5)..." >&2
+        
+        previous_stats="$first_stats"
+        current_stats="$second_stats"
+    fi
     
     # Initialize variables with defaults
     local prev_user=0 prev_nice=0 prev_system=0 prev_idle=0 prev_iowait=0 prev_irq=0 prev_softirq=0 prev_steal=0
@@ -156,53 +209,42 @@ get_cpu_usage() {
     curr_idle=${curr_idle:-0}; curr_iowait=${curr_iowait:-0}; curr_irq=${curr_irq:-0}
     curr_softirq=${curr_softirq:-0}; curr_steal=${curr_steal:-0}
     
-    if [[ -f "$previous_file" ]]; then
-        previous_stats=$(cat "$previous_file" 2>/dev/null || echo "")
+    if [[ -n "$previous_stats" ]]; then
+        # Parse previous values (silently ignore errors)
+        {
+            read -r _ prev_user prev_nice prev_system prev_idle prev_iowait prev_irq prev_softirq prev_steal _ _ <<< "$previous_stats" || true
+        } 2>/dev/null
         
-        # Debug: log previous stats (truncated)
-        echo "[DEBUG] Previous stats: $(echo "$previous_stats" | cut -d' ' -f1-5)..." >&2
+        # Default previous values if empty
+        prev_user=${prev_user:-0}; prev_nice=${prev_nice:-0}; prev_system=${prev_system:-0}
+        prev_idle=${prev_idle:-0}; prev_iowait=${prev_iowait:-0}; prev_irq=${prev_irq:-0}
+        prev_softirq=${prev_softirq:-0}; prev_steal=${prev_steal:-0}
         
-        if [[ -n "$previous_stats" ]]; then
-            # Parse previous values (silently ignore errors)
-            {
-                read -r _ prev_user prev_nice prev_system prev_idle prev_iowait prev_irq prev_softirq prev_steal _ _ <<< "$previous_stats" || true
-            } 2>/dev/null
-            
-            # Default previous values if empty
-            prev_user=${prev_user:-0}; prev_nice=${prev_nice:-0}; prev_system=${prev_system:-0}
-            prev_idle=${prev_idle:-0}; prev_iowait=${prev_iowait:-0}; prev_irq=${prev_irq:-0}
-            prev_softirq=${prev_softirq:-0}; prev_steal=${prev_steal:-0}
-            
-            # Calculate totals
-            local prev_total curr_total prev_idle_total curr_idle_total
-            prev_total=$((prev_user + prev_nice + prev_system + prev_irq + prev_softirq + prev_steal))
-            curr_total=$((curr_user + curr_nice + curr_system + curr_irq + curr_softirq + curr_steal))
-            prev_idle_total=$((prev_idle + prev_iowait))
-            curr_idle_total=$((curr_idle + curr_iowait))
-            
-            # Calculate deltas
-            local total_delta idle_delta
-            total_delta=$((curr_total - prev_total))
-            idle_delta=$((curr_idle_total - prev_idle_total))
-            
-            # Debug: log calculation
-            echo "[DEBUG] total_delta=$total_delta, idle_delta=$idle_delta" >&2
-            
-            # Calculate utilization (avoid division by zero)
-            if [[ $total_delta -gt 0 ]]; then
-                utilization=$(awk "BEGIN {printf \"%.1f\", $total_delta / ($total_delta + $idle_delta) * 100}" 2>/dev/null || echo "0.0")
-                echo "[DEBUG] CPU usage: $utilization%" >&2
-            else
-                echo "[DEBUG] No CPU activity or first measurement" >&2
-                utilization="0.0"
-            fi
+        # Calculate totals
+        local prev_total curr_total prev_idle_total curr_idle_total
+        prev_total=$((prev_user + prev_nice + prev_system + prev_irq + prev_softirq + prev_steal))
+        curr_total=$((curr_user + curr_nice + curr_system + curr_irq + curr_softirq + curr_steal))
+        prev_idle_total=$((prev_idle + prev_iowait))
+        curr_idle_total=$((curr_idle + curr_iowait))
+        
+        # Calculate deltas
+        local total_delta idle_delta
+        total_delta=$((curr_total - prev_total))
+        idle_delta=$((curr_idle_total - prev_idle_total))
+        
+        # Debug: log calculation
+        echo "[DEBUG] total_delta=$total_delta, idle_delta=$idle_delta" >&2
+        
+        # Calculate utilization (avoid division by zero)
+        if [[ $total_delta -gt 0 ]]; then
+            utilization=$(awk "BEGIN {printf \"%.1f\", $total_delta / ($total_delta + $idle_delta) * 100}" 2>/dev/null || echo "0.0")
+            echo "[DEBUG] CPU usage: $utilization%" >&2
         else
-            echo "[DEBUG] Previous stats file empty or unreadable" >&2
+            echo "[DEBUG] No CPU activity or first measurement" >&2
             utilization="0.0"
         fi
     else
-        # First run - just return 0, stats will be saved below
-        echo "[DEBUG] First run, no previous stats" >&2
+        echo "[DEBUG] Previous stats empty or unreadable" >&2
         utilization="0.0"
     fi
     
