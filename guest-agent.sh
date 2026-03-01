@@ -2,6 +2,7 @@
 #
 # PVY-LIMA-UI Guest Agent
 # This script runs inside Lima VMs to provide system information to the PVY-LIMA-UI desktop app.
+# Minimum Lima-Version: 2.0 or higher
 # Copyright: PVY.swiss LTD | Author: André Grueter 2026, released under GPL v.3.0
 VERSION="1.0.0"
 #
@@ -109,8 +110,14 @@ get_cpu_usage() {
     
     current_stats=$(get_cpu_stats)
     
+    # Debug: log current stats (truncated)
+    echo "[DEBUG] Current stats: $(echo "$current_stats" | cut -d' ' -f1-5)..." >&2
+    
     if [[ -f "$previous_file" ]]; then
         previous_stats=$(cat "$previous_file")
+        
+        # Debug: log previous stats (truncated)
+        echo "[DEBUG] Previous stats: $(echo "$previous_stats" | cut -d' ' -f1-5)..." >&2
         
         # Parse previous values
         local prev_user prev_nice prev_system prev_idle prev_iowait prev_irq prev_softirq prev_steal
@@ -141,22 +148,27 @@ get_cpu_usage() {
         total_delta=$((curr_total - prev_total))
         idle_delta=$((curr_idle_total - prev_idle_total))
         
+        # Debug: log calculation
+        echo "[DEBUG] total_delta=$total_delta, idle_delta=$idle_delta" >&2
+        
         # Calculate utilization (avoid division by zero)
         if [[ $total_delta -gt 0 ]]; then
             local utilization
             utilization=$(awk "BEGIN {printf \"%.1f\", $total_delta / ($total_delta + $idle_delta) * 100}")
+            echo "[DEBUG] CPU usage: $utilization%" >&2
             echo "$utilization"
         else
+            echo "[DEBUG] No CPU activity or first measurement" >&2
             echo "0.0"
         fi
     else
-        # First run - save stats and return 0
-        echo "$current_stats" > "$previous_file"
+        # First run - just return 0, stats will be saved below
+        echo "[DEBUG] First run, no previous stats" >&2
         echo "0.0"
     fi
     
-    # Save current stats for next run
-    echo "$current_stats" > "$previous_file"
+    # Save current stats for next run (atomic write to avoid race conditions)
+    echo "$current_stats" > "${previous_file}.tmp" && mv "${previous_file}.tmp" "$previous_file"
 }
 
 # Check if enhanced CPU stats are available
