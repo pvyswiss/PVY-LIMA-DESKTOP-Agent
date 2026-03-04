@@ -4,7 +4,7 @@
 # This script runs inside Lima VMs to provide system information to the PVY-LIMA-UI desktop app.
 # Minimum Lima-Version: 2.0 or higher
 # Copyright: PVY.swiss LTD | Author: André Grueter 2026, released under GPL v.3.0
-VERSION="1.0.2"
+VERSION="1.0.3"
 #
 # Installation:
 #   Copy this script to your Lima VM templates or add as a provisioning script:
@@ -67,16 +67,6 @@ if [[ "${1:-}" == "install" ]]; then
         # Ensure stats file has correct permissions
         chmod 666 "$stats_file" 2>/dev/null || true
     fi
-    
-    # Create OSC 7 wrapper for silent CWD tracking in PVY-LIMA-UI
-    mkdir -p /tmp/lima
-    cat > /tmp/lima/osc7-wrapper.sh << 'WRAPPER'
-#!/bin/bash
-export PROMPT_COMMAND='printf "\033]7;file://%s%s\a" "$HOSTNAME" "$PWD"'
-exec /bin/bash --norc --noprofile
-WRAPPER
-    chmod +x /tmp/lima/osc7-wrapper.sh
-    echo "Created OSC 7 wrapper for PVY-LIMA-UI"
     
     exit 0
 elif [[ "${1:-}" == "json" ]]; then
