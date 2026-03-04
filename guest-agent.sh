@@ -4,7 +4,7 @@
 # This script runs inside Lima VMs to provide system information to the PVY-LIMA-UI desktop app.
 # Minimum Lima-Version: 2.0 or higher
 # Copyright: PVY.swiss LTD | Author: André Grueter 2026, released under GPL v.3.0
-VERSION="1.0.0"
+VERSION="1.0.1"
 #
 # Installation:
 #   Copy this script to your Lima VM templates or add as a provisioning script:
@@ -29,6 +29,7 @@ VERSION="1.0.0"
 #   containers   - Container runtime info (Podman/Docker)
 #   json        - Output all info as JSON
 #   install     - Install this script to /usr/local/bin/guest-agent.sh
+#   setup-osc7  - Create OSC 7 wrapper scripts for silent CWD tracking
 
 set -euo pipefail
 
@@ -67,6 +68,30 @@ if [[ "${1:-}" == "install" ]]; then
         chmod 666 "$stats_file" 2>/dev/null || true
     fi
     
+    exit 0
+elif [[ "${1:-}" == "setup-osc7" ]]; then
+    # Create OSC 7 wrapper scripts in /tmp/lima (writable mount)
+    # These wrappers set PROMPT_COMMAND silently via environment
+    local wrapper_dir="/tmp/lima"
+    mkdir -p "$wrapper_dir"
+    
+    # Bash wrapper - uses PROMPT_COMMAND
+    cat > "$wrapper_dir/osc7-wrapper.sh" << 'WRAPPER'
+#!/bin/bash
+export PROMPT_COMMAND='printf "\033]7;file://%s%s\a" "$HOSTNAME" "$PWD"'
+exec /bin/bash --norc --noprofile
+WRAPPER
+    chmod +x "$wrapper_dir/osc7-wrapper.sh"
+    
+    # Zsh wrapper - uses precmd hook
+    cat > "$wrapper_dir/osc7-wrapper.zsh" << 'WRAPPER'
+#!/bin/zsh
+precmd() { print -Pn "\033]7;file://%m:%~\a" }
+exec /bin/zsh -d -f -y
+WRAPPER
+    chmod +x "$wrapper_dir/osc7-wrapper.zsh"
+    
+    echo "Created OSC 7 wrappers: bash=$wrapper_dir/osc7-wrapper.sh zsh=$wrapper_dir/osc7-wrapper.zsh"
     exit 0
 elif [[ "${1:-}" == "json" ]]; then
     OUTPUT_JSON=true
