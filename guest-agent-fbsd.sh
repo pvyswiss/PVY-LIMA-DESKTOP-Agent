@@ -64,7 +64,7 @@ get_kernel_version() {
 
 get_uptime() {
     local boot secs up_d up_h up_m
-    boot=$(sysctl -n kern.boottime 2>/dev/null | sed -E 's/.*sec = ([0-9]+).*/\1/')
+    boot=$(sysctl -n kern.boottime 2>/dev/null | sed -E 's/\{ sec = ([0-9]+).*/\1/')
     if [[ -n "$boot" ]]; then
         secs=$(( $(date +%s) - boot ))
         up_d=$(( secs / 86400 ))
