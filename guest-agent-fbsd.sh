@@ -6,7 +6,7 @@
 # to the PVY-LIMA-UI desktop app.
 # Requires: bash + sudo from pkg. sysctl/df/ifconfig/awk/sed are in base.
 # Copyright: PVY.swiss LTD | Author: André Grueter 2026, released under GPL v.3.0
-VERSION="1.0.4-fbsd"
+VERSION="1.0.5-fbsd"
 #
 # Installation:
 #   provision:
