@@ -6,7 +6,7 @@
 # to the PVY-LIMA-UI desktop app.
 # Requires: bash + sudo from pkg. sysctl/df/ifconfig/awk/sed are in base.
 # Copyright: PVY.swiss LTD | Author: André Grueter 2026, released under GPL v.3.0
-VERSION="1.0.3-fbsd"
+VERSION="1.0.4-fbsd"
 #
 # Installation:
 #   provision:
@@ -21,6 +21,11 @@ VERSION="1.0.3-fbsd"
 #
 # Commands: (same as Linux guest-agent.sh)
 #   all/json/install/os/kernel/uptime/memory/cpu/disk/network/containers
+#   setup-osc7 - Install OSC 7 shell integration for bash AND tcsh/csh
+#               (silent CWD tracking for terminals like iTerm2/Kitty/WezTerm).
+#               bash:     PROMPT_COMMAND in ~/.bashrc
+#               tcsh/csh: cwdcmd alias in ~/.tcshrc (FreeBSD root default shell)
+#               sh:       not supported (no prompt hook in POSIX sh)
 
 set -uo pipefail
 
@@ -45,6 +50,62 @@ if [[ "${1:-}" == "install" ]]; then
     else
         chmod 666 "$stats_file" 2>/dev/null || true
     fi
+    exit 0
+elif [[ "${1:-}" == "setup-osc7" ]]; then
+    # OSC 7: emit file://hostname/pwd escape sequence on every prompt so
+    # capable terminals (iTerm2, Kitty, WezTerm, ...) can track the CWD.
+    MARKER="# PVY-LIMA-UI OSC7"
+
+    # --- bash (interactive shells) ---
+    if command -v bash >/dev/null 2>&1; then
+        for RC in "$HOME/.bashrc"; do
+            touch "$RC"
+            if ! grep -qF "$MARKER" "$RC"; then
+                {
+                    echo "$MARKER"
+                    echo 'export PROMPT_COMMAND='"'"'printf "\\033]7;file://%s%s\\a" "$HOSTNAME" "$PWD"'"'"''
+                } >> "$RC"
+                echo "OSC7 added to $RC"
+            else
+                echo "OSC7 already present in $RC"
+            fi
+        done
+    fi
+
+    # --- tcsh / csh (FreeBSD default root shell) ---
+    if command -v tcsh >/dev/null 2>&1 || command -v csh >/dev/null 2>&1; then
+        for RC in "$HOME/.tcshrc" "$HOME/.cshrc"; do
+            touch "$RC"
+            if ! grep -qF "$MARKER" "$RC"; then
+                {
+                    echo "$MARKER"
+                    echo 'if ($?prompt) then'
+                    echo '  alias cwdcmd "printf \033]7;file://%s%s\a $HOST $cwd:q"'
+                    echo 'endif'
+                } >> "$RC"
+                echo "OSC7 added to $RC"
+            else
+                echo "OSC7 already present in $RC"
+            fi
+        done
+    fi
+
+    # --- shared wrapper for explicit use (mirrors Linux osc7-wrapper.sh) ---
+    WRAPPER="/usr/local/bin/osc7-wrapper.sh"
+    cat > "$WRAPPER" << 'WRAPPEREOF'
+#!/bin/sh
+# PVY-LIMA-UI OSC7 wrapper - works under bash (and other PROMPT_COMMAND shells)
+if [ -n "${BASH_VERSION:-}" ]; then
+    export PROMPT_COMMAND='printf "\033]7;file://%s%s\a" "$HOSTNAME" "$PWD"'
+    exec bash -l
+fi
+echo "osc7-wrapper: interactive shell with prompt hook required (bash)." >&2
+exec "$SHELL"
+WRAPPEREOF
+    chmod 755 "$WRAPPER"
+    echo "Installed $WRAPPER"
+
+    echo "setup-osc7 complete. New shells now emit OSC 7 CWD tracking."
     exit 0
 elif [[ "${1:-}" == "json" ]]; then
     OUTPUT_JSON=true
