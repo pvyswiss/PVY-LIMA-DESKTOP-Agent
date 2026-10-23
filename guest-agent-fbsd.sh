@@ -73,6 +73,8 @@ elif [[ "${1:-}" == "setup-osc7" ]]; then
     fi
 
     # --- tcsh / csh (FreeBSD default root shell) ---
+    # Verified live: format string MUST be double-quoted inside the
+    # single-quoted alias body, or csh's printf builtin drops the escapes.
     if command -v tcsh >/dev/null 2>&1 || command -v csh >/dev/null 2>&1; then
         for RC in "$HOME/.tcshrc" "$HOME/.cshrc"; do
             touch "$RC"
@@ -80,7 +82,7 @@ elif [[ "${1:-}" == "setup-osc7" ]]; then
                 {
                     echo "$MARKER"
                     echo 'if ($?prompt) then'
-                    echo '  alias cwdcmd "printf \033]7;file://%s%s\a $HOST $cwd:q"'
+                    echo '  alias cwdcmd '\''printf "\033]7;file://%s%s\a" $HOST $cwd:q'\'''
                     echo 'endif'
                 } >> "$RC"
                 echo "OSC7 added to $RC"
@@ -91,7 +93,11 @@ elif [[ "${1:-}" == "setup-osc7" ]]; then
     fi
 
     # --- shared wrapper for explicit use (mirrors Linux osc7-wrapper.sh) ---
-    WRAPPER="/usr/local/bin/osc7-wrapper.sh"
+    # Install to ~/.local/bin (user-writable); /usr/local/bin needs root and
+    # setup-osc7 is a user-level operation.
+    WRAPPER_DIR="$HOME/.local/bin"
+    mkdir -p "$WRAPPER_DIR"
+    WRAPPER="$WRAPPER_DIR/osc7-wrapper.sh"
     cat > "$WRAPPER" << 'WRAPPEREOF'
 #!/bin/sh
 # PVY-LIMA-UI OSC7 wrapper - works under bash (and other PROMPT_COMMAND shells)
