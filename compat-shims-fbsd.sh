@@ -76,12 +76,12 @@ for a in "$@"; do
 done
 exec /bin/ps "$@"'
 
-# --- hostname: Linux -I (all IPs) ---
+# --- hostname: Linux -I (all IPs, IP-tokens only - filters any noise) ---
 install_shim hostname '#!/bin/sh
-# PVY compat: hostname with Linux -I flag
+# PVY compat: hostname with Linux -I flag; emits IPv4 tokens only
 for a in "$@"; do
   if [ "$a" = "-I" ]; then
-    ifconfig -a | awk "\$1==\"inet\" && \$2 !~ /^127\./ {printf \"%s \", \$2}" | sed "s/ $//"
+    ifconfig -a | awk "\$1==\"inet\" && \$2 !~ /^127\./ {print \$2}" | grep -E "^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+$" | tr "\\n" " " | sed "s/ $//"
     echo
     exit 0
   fi
