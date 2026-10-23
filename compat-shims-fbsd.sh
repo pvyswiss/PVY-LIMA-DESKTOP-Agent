@@ -64,13 +64,15 @@ fs=$(echo "$out" | tail -1 | awk "{print \$1}")
 printf "%-6s %6s %6s %6s %6s %s\n" "Size" "Used" "Avail" "Use%" "" ""
 /bin/df -g $args | tail -1 | awk "{printf \"%-6s %6s %6s %6s %6s\\n\", \$2, \$3, \$4, \$5, \$6}"'
 
-# --- ps: Linux aux --sort=-pcpu ---
+# --- ps: Linux aux --sort=-pcpu (kernel threads filtered, as on Linux) ---
 install_shim ps '#!/bin/sh
-# PVY compat: ps wrapper; supports "aux --sort=-pcpu" (Linux syntax)
+# PVY compat: ps wrapper; supports "aux --sort=-pcpu" (Linux syntax).
+# Kernel threads ([idle], [intr], ...) are filtered - Linux userland ps
+# does not list them either; showing them confuses CPU rankings.
 for a in "$@"; do
   if [ "$a" = "--sort=-pcpu" ]; then
-    /bin/ps ax -o user,pid,pcpu,pmem,vsz,rss,tty,stat,start,time,command | head -1
-    /bin/ps ax -o user,pid,pcpu,pmem,vsz,rss,tty,stat,start,time,command | tail -n +2 | sort -k3 -rn | head -50
+    /bin/ps ax -o user,pid,pcpu,pmem,vsz,rss,tty,stat,start,time,command | awk "NR==1 || \$11 !~ /^\\[/"
+    /bin/ps ax -o user,pid,pcpu,pmem,vsz,rss,tty,stat,start,time,command | tail -n +2 | awk "\$11 !~ /^\\[/" | sort -k3 -rn | head -50
     exit 0
   fi
 done
